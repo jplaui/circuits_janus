@@ -1,0 +1,114 @@
+// -*- go -*-
+
+package main
+
+import (
+	"crypto/hmac"
+)
+
+// Tests to derive CHTS:
+// dES: 0x6f2615a108c702c5678f54fc9dbab69716c076189c48250cebeac3576c3611ba
+// cShare: 0x677f7ff26ac202469e1a2d39dc001c5e7fcfb1f967a3cb4affa51185facc57ac
+// pShare: 0xfbe470a4a1e11bbaa2ebb9da082924f99a20681e5feed0000e2d2b5e613d22df
+// pModP: 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff
+// HS: c571a176894ac7aff65d52522f4d0861060f3c3b96144567dd10fa79d218d878
+// label+H2: 0x002012746c7331332063206873207472616666696320825e4f79bbcb0e8adb287cac19c378145b7d6c465734422da6882463eadc905701
+// CHTS: 136513e4c51032bb2ba86892f0e3e24a75b4fbfef56d92cc0c57d4c67a847e65
+
+// Tests to derive SHTS:
+// dES: 0x6f2615a108c702c5678f54fc9dbab69716c076189c48250cebeac3576c3611ba
+// cShare: 0x677f7ff26ac202469e1a2d39dc001c5e7fcfb1f967a3cb4affa51185facc57ac
+// pShare: 0xfbe470a4a1e11bbaa2ebb9da082924f99a20681e5feed0000e2d2b5e613d22df
+// pModP: 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff
+// HS: c571a176894ac7aff65d52522f4d0861060f3c3b96144567dd10fa79d218d878
+// label+H2: 0x002012746c7331332073206873207472616666696320825e4f79bbcb0e8adb287cac19c378145b7d6c465734422da6882463eadc905701
+// SHTS: 7691bca4c1a92ffc70efe68a178d928540f47254512c290693fbc2a8c28ab59c
+
+// client: MPCLDIR=./../../ ./garbled -v -i 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff,0xfbe470a4a1e11bbaa2ebb9da082924f99a20681e5feed0000e2d2b5e613d22df,0x6f2615a108c702c5678f54fc9dbab69716c076189c48250cebeac3576c3611ba examples/tls13_xhts.mpcl
+// server: MPCLDIR=./../../ ./garbled -v -i 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff,0xfbe470a4a1e11bbaa2ebb9da082924f99a20681e5feed0000e2d2b5e613d22df,0x6f2615a108c702c5678f54fc9dbab69716c076189c48250cebeac3576c3611ba examples/tls13_xhts.mpcl
+type Garbler struct {
+	modP      uint512
+	privShare uint512
+	dES       [32]byte
+}
+
+// client: MPCLDIR=./../../ ./garbled -e -v -i 0x677f7ff26ac202469e1a2d39dc001c5e7fcfb1f967a3cb4affa51185facc57ac,0x002012746c7331332063206873207472616666696320825e4f79bbcb0e8adb287cac19c378145b7d6c465734422da6882463eadc905701 examples/tls13_xhts.mpcl
+// server: MPCLDIR=./../../ ./garbled -e -v -i 0x677f7ff26ac202469e1a2d39dc001c5e7fcfb1f967a3cb4affa51185facc57ac,0x002012746c7331332073206873207472616666696320825e4f79bbcb0e8adb287cac19c378145b7d6c465734422da6882463eadc905701 examples/tls13_xhts.mpcl
+type Evaluator struct {
+	// privShare [32]byte
+	privShare uint512
+	hTwo      [55]byte
+}
+
+func main(g Garbler, e Evaluator) []byte {
+
+	// combine secret shares into DHE
+	DHE := (g.privShare + e.privShare) % g.modP
+	bytesDHE := uint512ToByte(DHE)[32:]
+	// compute HS
+	HS := hmac.SumSHA256(bytesDHE[:], g.dES)
+
+	// compute SHTS
+	var mH2 [55]byte
+	// must be set individually because 0x00 start is discarded when parsed
+	mH2[0] = 0x00
+	for i := 1; i < 55; i++ {
+		mH2[i] = e.hTwo[i-1]
+	}
+	return hmac.SumSHA256(mH2[:], HS)
+}
+
+func byteToUint512(x [64]byte) uint512 {
+	var r uint512
+
+	for i := 0; i < len(x); i++ {
+		r <<= 8
+		r |= uint512(x[i])
+	}
+	return r
+}
+
+func uint512ToByte(x uint512) [64]byte {
+	var r [64]byte
+
+	for i := 0; i < 64; i++ {
+		r[63-i] = x & 0xff
+		x >>= 8
+	}
+	return r
+}
+
+// expandlabel go playground snippet
+// You can edit this code!
+// Click here and start typing.
+// package main
+
+// import (
+// 	"bytes"
+// 	"encoding/binary"
+// 	"encoding/hex"
+// 	"fmt"
+// )
+
+// func main() {
+// 	label := "s hs traffic"
+// 	transcript, err := hex.DecodeString("7161fcbb9e656e6fb41a0f0f767f2615380bab9a03914c8cec8bf9540886e8cd")
+// 	if err != nil {
+// 		fmt.Println("eeror...")
+// 	}
+// 	size := 32 // with sha256
+
+// 	var b bytes.Buffer
+// 	length := make([]byte, 2)
+// 	binary.BigEndian.PutUint16(length, uint16(size))
+// 	b.Write(length)
+// 	tmp := "tls13 " + label
+// 	b.Write([]byte{byte(len(tmp))})
+// 	b.Write([]byte(tmp))
+// 	b.Write([]byte{byte(len(transcript))})
+// 	b.Write(transcript)
+// 	b.Write([]byte{1})
+
+// 	fmt.Println(len(b.Bytes()))
+// 	fmt.Println("hex label:", hex.EncodeToString(b.Bytes()))
+// }
